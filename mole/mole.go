@@ -1,6 +1,7 @@
 package mole
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -21,24 +22,33 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
+// cli keeps a reference to the latest Client object created.
+// This is mostly needed to introspect client states during runtime (e.g. a
+// remote procedure call that needs to check certain configuration fields)
+var cli *Client
+
+func init() {
+	rpc.Register("show-instance", ShowRpc)
+}
+
 type Configuration struct {
-	Id                string
-	TunnelType        string
-	Verbose           bool
-	Insecure          bool
-	Detach            bool
-	Source            alias.AddressInputList
-	Destination       alias.AddressInputList
-	Server            alias.AddressInput
-	Key               string
-	KeepAliveInterval time.Duration
-	ConnectionRetries int
-	WaitAndRetry      time.Duration
-	SshAgent          string
-	Timeout           time.Duration
-	SshConfig         string
-	Rpc               bool
-	RpcAddress        string
+	Id                string                 `json:"id"`
+	TunnelType        string                 `json:"tunnel-type"`
+	Verbose           bool                   `json:"verbose"`
+	Insecure          bool                   `json:"insecure"`
+	Detach            bool                   `json:"detach"`
+	Source            alias.AddressInputList `json:"source"`
+	Destination       alias.AddressInputList `json:"destination"`
+	Server            alias.AddressInput     `json:"server"`
+	Key               string                 `json:"key"`
+	KeepAliveInterval time.Duration          `json:"keep-alive-interval"`
+	ConnectionRetries int                    `json:"connection-retries"`
+	WaitAndRetry      time.Duration          `json:"wait-and-retry"`
+	SshAgent          string                 `json:"ssh-agent"`
+	Timeout           time.Duration          `json:"timeout"`
+	SshConfig         string                 `json:"ssh-config"`
+	Rpc               bool                   `json:"rpc"`
+	RpcAddress        string                 `json:"rpc-address"`
 }
 
 // ParseAlias translates a Configuration object to an Alias object.
@@ -71,7 +81,9 @@ type Client struct {
 
 // New initializes a new mole's client.
 func New(conf *Configuration) *Client {
-	return &Client{Conf: conf}
+	cli = &Client{Conf: conf}
+
+	return cli
 }
 
 // Start kicks off mole's client, establishing the tunnel and its channels
@@ -125,7 +137,6 @@ func (c *Client) Start() error {
 		return err
 	}
 
-	log.Infof(">>> %t %s", c.Conf.Rpc, c.Conf.RpcAddress)
 	if c.Conf.Rpc {
 		addr, err := rpc.Start(c.Conf.RpcAddress)
 		if err != nil {
@@ -142,6 +153,8 @@ func (c *Client) Start() error {
 
 			return err
 		}
+
+		c.Conf.RpcAddress = addr.String()
 
 		log.Infof("rpc server address saved on %s", rd)
 	}
@@ -325,6 +338,22 @@ func (c *Configuration) Merge(al *alias.Alias, givenFlags []string) error {
 	c.RpcAddress = al.RpcAddress
 
 	return nil
+}
+
+// ShowRpc returns runtime information about the mole client.
+func ShowRpc(params interface{}) (json.RawMessage, error) {
+	if cli == nil {
+		return nil, fmt.Errorf("client configuration could not be found.")
+	}
+
+	conf := cli.Conf
+
+	cj, err := json.Marshal(conf)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.RawMessage(cj), nil
 }
 
 func startDaemonProcess(instanceConf *DetachedInstance) error {
